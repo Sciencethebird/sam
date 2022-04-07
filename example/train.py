@@ -43,8 +43,8 @@ if __name__ == "__main__":
     dataset = Cifar100(args.batch_size, args.threads)
     log = Log(log_each=10)
     #model = WideResNet(args.depth, args.width_factor, args.dropout, in_channels=3, labels=args.num_of_class).to(device)
-    
-    model = EfficientNet.from_pretrained('efficientnet-b0')
+
+    model = EfficientNet.from_pretrained(args.model_name)
     feature = model._fc.in_features
     model._fc = nn.Linear(in_features=feature, out_features=100, bias=True)
     model = model.to(device)
