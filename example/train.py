@@ -1,5 +1,8 @@
 import argparse
+from datetime import datetime
 import torch
+import wandb
+from torch import nn
 
 from model.wide_res_net import WideResNet
 from model.smooth_cross_entropy import smooth_crossentropy
@@ -8,6 +11,7 @@ from utility.log import Log
 from utility.initialize import initialize
 from utility.step_lr import StepLR
 from utility.bypass_bn import enable_running_stats, disable_running_stats
+from efficientnet_pytorch import EfficientNet
 
 import sys; sys.path.append("..")
 from sam import SAM
@@ -27,6 +31,9 @@ if __name__ == "__main__":
     parser.add_argument("--rho", default=2.0, type=int, help="Rho parameter for SAM.")
     parser.add_argument("--weight_decay", default=0.0005, type=float, help="L2 weight decay.")
     parser.add_argument("--width_factor", default=8, type=int, help="How many times wider compared to normal ResNet.")
+    parser.add_argument("--num_of_class", default=100, type=int, help="number of prediction class")
+    parser.add_argument("--wandb_project_name", default="ML_HW2", type=str, help="your wandb project name")
+    parser.add_argument("--model_name", default="efficientnet-b0", type=str, help="your model name")
     args = parser.parse_args()
 
     initialize(args, seed=42)
@@ -35,11 +42,21 @@ if __name__ == "__main__":
     #dataset = Cifar(args.batch_size, args.threads)
     dataset = Cifar100(args.batch_size, args.threads)
     log = Log(log_each=10)
-    model = WideResNet(args.depth, args.width_factor, args.dropout, in_channels=3, labels=100).to(device)
+    #model = WideResNet(args.depth, args.width_factor, args.dropout, in_channels=3, labels=args.num_of_class).to(device)
+    
+    model = EfficientNet.from_pretrained('efficientnet-b0')
+    feature = model._fc.in_features
+    model._fc = nn.Linear(in_features=feature, out_features=100, bias=True)
+    model = model.to(device)
 
     base_optimizer = torch.optim.SGD
     optimizer = SAM(model.parameters(), base_optimizer, rho=args.rho, adaptive=args.adaptive, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = StepLR(optimizer, args.learning_rate, args.epochs)
+
+    experiment_name = f"{args.model_name}-{datetime.today().strftime('%Y-%m-%d-%H-%M')}"
+    wandb.init(project=args.wandb_project_name)
+    wandb.run.name = experiment_name
+    wandb.run.save()
 
     for epoch in range(args.epochs):
         model.train()
@@ -64,6 +81,8 @@ if __name__ == "__main__":
                 correct = torch.argmax(predictions.data, 1) == targets
                 log(model, loss.cpu(), correct.cpu(), scheduler.lr())
                 scheduler(epoch)
+                wandb.log({'train/loss': loss.cpu(),
+                            'train/correct': correct.cpu()})
 
         model.eval()
         log.eval(len_dataset=len(dataset.test))
@@ -76,5 +95,8 @@ if __name__ == "__main__":
                 loss = smooth_crossentropy(predictions, targets)
                 correct = torch.argmax(predictions, 1) == targets
                 log(model, loss.cpu(), correct.cpu())
+
+                wandb.log({'test/loss': loss.cpu(),
+                            'test/correct': correct.cpu()})
 
     log.flush()
